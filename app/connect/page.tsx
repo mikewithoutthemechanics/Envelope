@@ -1,11 +1,16 @@
+"use client";
+
 import { useEffect, useState } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { useToast } from "@/components/ui/use-toast";
+import { Navigation } from "@/components/Navigation";
+import { PlatformConnect } from "@/components/PlatformConnect";
 
 export default function ConnectPage() {
   const [supabase] = useState(() => createBrowserSupabaseClient());
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [connections, setConnections] = useState<any[]>([]);
 
   useEffect(() => {
     fetchConnections();
@@ -18,13 +23,13 @@ export default function ConnectPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const { data, error } = await (supabase as any)
       .from("connections")
       .select("*")
       .eq("user_id", session.user.id);
 
     if (!error && data) {
-      setLoading(data);
+      setConnections(data);
     }
     setLoading(false);
   };
@@ -47,16 +52,16 @@ export default function ConnectPage() {
         <p className="mb-4 text-muted-foreground">
           Connect platforms to schedule and post content. You can connect multiple platforms
           per post.
-        </div>
+        </p>
 
         <PlatformConnect />
 
         <div className="mt-8 pt-8 border-t">
           <h2 className="mb-4 text-xl font-medium">Connection Status</h2>
 
-          {supabase && (
+          {connections.length > 0 && (
             <div className="space-y-3">
-              {supabase.connections.map((conn: any) => (
+              {connections.map((conn: any) => (
                 <div
                   key={conn.id}
                   className="border rounded-lg p-4"

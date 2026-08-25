@@ -1,3 +1,5 @@
+"use client";
+
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { createContext, useContext, useEffect, useState } from "react";
 import type { User } from "@/types";

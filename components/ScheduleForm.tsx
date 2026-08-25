@@ -40,20 +40,12 @@ export function ScheduleForm() {
 
   const handleSubmit = async (type: "draft" | "schedule") => {
     if (!content.trim() || selectedPlatforms.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please enter content and select at least one platform",
-        variant: "destructive",
-      });
+      toast.error("Please enter content and select at least one platform");
       return;
     }
 
     if (type === "schedule" && !scheduledAt) {
-      toast({
-        title: "Error",
-        description: "Please select a scheduled date and time",
-        variant: "destructive",
-      });
+      toast.error("Please select a scheduled date and time");
       return;
     }
 
@@ -62,11 +54,7 @@ export function ScheduleForm() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user?.id) {
-        toast({
-          title: "Error",
-          description: "You must be logged in",
-          variant: "destructive",
-        });
+        toast.error("You must be logged in");
         setIsSubmitting(false);
         return;
       }
@@ -95,24 +83,18 @@ export function ScheduleForm() {
         throw new Error(result.error || "Failed to create schedule");
       }
 
-      toast({
-        title: "Success",
-        description:
-          type === "draft"
-            ? "Saved as draft"
-            : `Scheduled for ${format(scheduledAt!, "PPP p")}`,
-      });
+      toast.success(
+        type === "draft"
+          ? "Saved as draft"
+          : `Scheduled for ${format(scheduledAt!, "PPP p")}`
+      );
 
       setContent("");
       setMediaUrls("");
       setSelectedPlatforms([]);
       setScheduledAt(undefined);
     } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Something went wrong",
-        variant: "destructive",
-      });
+      toast.error(error instanceof Error ? error.message : "Something went wrong");
     } finally {
       setIsSubmitting(false);
     }

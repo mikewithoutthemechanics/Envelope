@@ -1,3 +1,5 @@
+import type { Platform } from "@/types";
+
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
 
 export type Database = {
@@ -7,7 +9,7 @@ export type Database = {
         Row: {
           id: string;
           user_id: string;
-          platform: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform: Platform;
           access_token: string;
           refresh_token?: string | null;
           expires_at?: string | null;
@@ -18,7 +20,7 @@ export type Database = {
         Insert: {
           id?: string;
           user_id: string;
-          platform: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform: Platform;
           access_token: string;
           refresh_token?: string | null;
           expires_at?: string | null;
@@ -29,7 +31,7 @@ export type Database = {
         Update: {
           id?: string;
           user_id?: string;
-          platform?: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform?: Platform;
           access_token?: string;
           refresh_token?: string | null;
           expires_at?: string | null;
@@ -44,7 +46,7 @@ export type Database = {
           schedule_id?: string | null;
           user_id: string;
           content: string;
-          platforms: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms: Platform[];
           media_urls?: string[] | null;
           status: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           error_message?: string | null;
@@ -57,7 +59,7 @@ export type Database = {
           schedule_id?: string | null;
           user_id: string;
           content: string;
-          platforms: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms: Platform[];
           media_urls?: string[] | null;
           status: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           error_message?: string | null;
@@ -70,7 +72,7 @@ export type Database = {
           schedule_id?: string | null;
           user_id?: string;
           content?: string;
-          platforms?: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms?: Platform[];
           media_urls?: string[] | null;
           status?: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           error_message?: string | null;
@@ -84,10 +86,10 @@ export type Database = {
           id: string;
           user_id: string;
           content: string;
-          platforms: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms: Platform[];
           media_urls?: string[] | null;
           scheduled_at: string;
-          status: "draft" | "scheduled" | "posting" | "posted" | "failed";
+          status: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           created_at: string;
           updated_at: string;
         };
@@ -95,10 +97,10 @@ export type Database = {
           id?: string;
           user_id: string;
           content: string;
-          platforms: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms: Platform[];
           media_urls?: string[] | null;
           scheduled_at: string;
-          status: "draft" | "scheduled" | "posting" | "posted" | "failed";
+          status: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           created_at?: string;
           updated_at?: string;
         };
@@ -106,10 +108,10 @@ export type Database = {
           id?: string;
           user_id?: string;
           content?: string;
-          platforms?: ("twitter" | "instagram" | "tiktok" | "youtube")[];
+          platforms?: Platform[];
           media_urls?: string[] | null;
           scheduled_at?: string;
-          status?: "draft" | "scheduled" | "posting" | "posted" | "failed";
+          status?: "draft" | "scheduled" | "publishing" | "posted" | "failed";
           created_at?: string;
           updated_at?: string;
         };
@@ -118,7 +120,7 @@ export type Database = {
         Row: {
           id: string;
           post_id: string;
-          platform: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform: Platform;
           scheduled_at: string;
           status: "pending" | "publishing" | "completed" | "failed";
           error_message?: string | null;
@@ -127,7 +129,7 @@ export type Database = {
         Insert: {
           id?: string;
           post_id: string;
-          platform: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform: Platform;
           scheduled_at: string;
           status: "pending" | "publishing" | "completed" | "failed";
           error_message?: string | null;
@@ -136,7 +138,7 @@ export type Database = {
         Update: {
           id?: string;
           post_id?: string;
-          platform?: "twitter" | "instagram" | "tiktok" | "youtube";
+          platform?: Platform;
           scheduled_at?: string;
           status?: "pending" | "publishing" | "completed" | "failed";
           error_message?: string | null;

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createUserSupabaseClient, getAccessTokenFromRequest } from "@/lib/supabase-user";
 import { z } from "zod";
 import type { Platform } from "@/types";
+import { rateLimiters } from "@/lib/rate-limiter";
 
 const postSchema = z.object({
   post_id: z.string().uuid(),
@@ -9,11 +10,21 @@ const postSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  try {
-    const supabase = createServerSupabaseClient();
-    const { data: { session } } = await supabase.auth.getSession();
+  // Rate limiting
+  const rateLimitResponse = await rateLimiters.write(request as any);
+  if (rateLimitResponse) return rateLimitResponse;
 
-    if (!session?.user?.id) {
+  try {
+    // Use user-scoped client (respects RLS)
+    const accessToken = getAccessTokenFromRequest(request);
+    if (!accessToken) {
+      return NextResponse.json({ error: "Unauthorized - No access token" }, { status: 401 });
+    }
+    
+    const supabase = createUserSupabaseClient(accessToken);
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -28,7 +39,7 @@ export async function POST(request: Request) {
     }
 
     const { post_id, platforms } = validated.data;
-    const userId = session.user.id;
+    const userId = user.id;
 
     // If no platforms specified, publish all platforms for this post
     const platformsToPublish = platforms || (await getPostPlatforms(supabase, post_id, userId));
@@ -36,7 +47,7 @@ export async function POST(request: Request) {
     // Update scheduled items status to publishing
     if (platformsToPublish.length > 0) {
       for (const platform of platformsToPublish) {
-        await supabase.from("scheduled_items").update({
+        await (supabase as any).from("scheduled_items").update({
           status: "publishing",
         }).eq("post_id", post_id).eq("platform", platform);
       }
@@ -44,7 +55,7 @@ export async function POST(request: Request) {
 
     // Start the posting process - in a real app, this would trigger a background worker
     // For now, we'll update the status and return
-    await supabase.from("posts").update({
+    await (supabase as any).from("posts").update({
       status: "publishing",
     }).eq("id", post_id);
 
@@ -71,5 +82,4 @@ async function getPostPlatforms(supabase: any, postId: string, userId: string) {
     .single();
 
   return post?.platforms || [];
-  }
 }

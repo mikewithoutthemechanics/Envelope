@@ -12,7 +12,7 @@ export interface SocialPost {
   updated_at: string;
   error_message?: string;
   published_at?: string;
-  scheduled_id?: string;
+  schedule_id?: string;
 }
 
 export interface ScheduledItem {
@@ -40,7 +40,7 @@ export interface PlatformConnection {
 export interface PostStatus {
   post_id: string;
   platform: Platform;
-  status: "pending" | "publishing" | "completed" | "failed";
+  status: "draft" | "pending" | "publishing" | "completed" | "failed";
   message?: string;
   published_at?: string;
 }

@@ -1,36 +1,40 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createUserSupabaseClient, getAccessTokenFromRequest } from "@/lib/supabase-user";
 
 export async function GET(request: Request) {
   try {
+    // Use user-scoped client (respects RLS)
+    const accessToken = getAccessTokenFromRequest(request);
+    if (!accessToken) {
+      return NextResponse.json({ error: "Unauthorized - No access token" }, { status: 401 });
+    }
+    
+    const supabase = createUserSupabaseClient(accessToken);
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const post_id = searchParams.get("post_id");
-    const user_id = searchParams.get("user_id");
-
-    if (!post_id || !user_id) {
+    
+    if (!post_id) {
       return NextResponse.json(
-        { error: "post_id and user_id required" },
+        { error: "post_id required" },
         { status: 400 }
       );
     }
 
-    const supabase = createServerSupabaseClient();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session?.user?.id || session.user.id !== user_id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Get post
-    const { data: post, error: postError } = await supabase
+    // Get post (RLS ensures user only sees their own posts)
+    const { data: post, error: postError } = await (supabase as any)
       .from("posts")
       .select("*")
       .eq("id", post_id)
-      .eq("user_id", user_id)
       .single();
 
     // Get scheduled items
-    const { data: items, error: itemsError } = await supabase
+    const { data: items, error: itemsError } = await (supabase as any)
       .from("scheduled_items")
       .select("*")
       .eq("post_id", post_id);

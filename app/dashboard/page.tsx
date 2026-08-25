@@ -1,15 +1,28 @@
+"use client";
+
 import { Dashboard } from "@/components/Dashboard";
 import { Navigation } from "@/components/Navigation";
-import { PostStatus } from "@/components/PostStatus";
+import type { SocialPost, ScheduledItem, PostStatus as PostStatusType } from "@/types";
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { Clock, Send, CheckCircle, XCircle } from "lucide-react";
+
+const statusIcons = {
+  pending: Clock,
+  publishing: Send,
+  completed: CheckCircle,
+  failed: XCircle,
+};
 
 export default function DashboardPage() {
-  const [posts, setPosts] = useState<any[]>([]);
-  const [items, setItems] = useState<any[]>([]);
+  const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [items, setItems] = useState<ScheduledItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [supabase] = useState(() => import("@/lib/supabase").createClient);
-  const [postStatuses, setPostStatuses] = useState<Map<string, any>>(new Map());
+  const [supabase] = useState(() => createBrowserSupabaseClient());
+  const [postStatuses, setPostStatuses] = useState<Map<string, PostStatusType>>(new Map());
 
   useEffect(() => {
     fetchData();
@@ -46,7 +59,7 @@ export default function DashboardPage() {
       );
       const statusResult = await statusResp.json();
       if (statusResult?.data) {
-        setPostStatuses((prev) => new Map(prev).set(post.id, result.data));
+        setPostStatuses((prev) => new Map(prev).set(post.id, statusResult.data));
       }
     }
 
@@ -61,11 +74,11 @@ export default function DashboardPage() {
   };
 
   const totalPosts = posts.length;
-  const postedCount = posts.filter((p: any) => p.status === "posted").length;
+  const postedCount = posts.filter((p: SocialPost) => p.status === "posted").length;
   const scheduledCount = posts.filter(
-    (p: any) => p.status === "scheduled" || p.status === "publishing"
+    (p: SocialPost) => p.status === "scheduled" || p.status === "publishing"
   ).length;
-  const failedCount = posts.filter((p: any) => p.status === "failed").length;
+  const failedCount = posts.filter((p: SocialPost) => p.status === "failed").length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -126,14 +139,9 @@ export default function DashboardPage() {
                   <p className="text-sm text-muted-foreground">No recent activity</p>
                 ) : (
                   <div className="space-y-3">
-                    {items.map((item: any) => {
+                    {items.map((item: ScheduledItem) => {
                       const s = postStatuses.get(item.post_id) || {};
-                      const StatusIcon =
-                        ["Clock", "Send", "CheckCircle", "XCircle"][
-                          ["pending", "publishing", "completed", "failed"].indexOf(
-                            item.status
-                          )
-                        ] ?? "Clock";
+                      const StatusIcon = statusIcons[item.status] ?? Clock;
                       return (
                         <div
                           key={item.id}
@@ -185,7 +193,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-muted-foreground">No posts yet</p>
                 ) : (
                   <div className="space-y-3">
-                    {posts.map((post: any) => {
+                    {posts.map((post: SocialPost) => {
                       const s = postStatuses.get(post.id) || {};
                       return (
                         <div
@@ -222,25 +230,5 @@ export default function DashboardPage() {
         </div>
       </main>
     </div>
-  );
-}
-
-function Badge({ variant, className, children }: any) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-md border px-2.5 py-1.5 text-xs font-medium",
-        variant === "default"
-          ? "bg-background text-foreground"
-          : variant === "outline"
-          ? "border border-input bg-background"
-          : variant === "secondary"
-          ? "bg-accent text-accent-foreground"
-          : "primary"
-      )}
-      {className}
-    >
-      {children}
-    </span>
   );
 }

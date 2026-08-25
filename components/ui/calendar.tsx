@@ -1,9 +1,4 @@
-import * as React from "react";
 import { cn } from "@/lib/utils";
-import {
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
 import { DayPicker } from "react-day-picker";
 import type { ComponentProps } from "react";
 
@@ -43,10 +38,6 @@ function Calendar({
         day_range_middle: "bg-accent text-accent-foreground",
         day_hidden: "invisible",
         ...classNames,
-      }}
-      components={{
-        IconLeft: ({ ...props }) => <ChevronLeft className="h-4 w-4" />,
-        IconRight: ({ ...props }) => <ChevronRight className="h-4 w-4" />,
       }}
       {...props}
     />

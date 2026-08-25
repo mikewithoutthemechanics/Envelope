@@ -3,11 +3,9 @@
     "next/core-web-vitals",
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
-    "plugin:@typescript-eslint/recommended-requiring-type-checking",
     "plugin:react/recommended",
     "plugin:react/jsx-runtime",
-    "plugin:react-hooks/recommended",
-    "plugin:@typescript-eslint/plugin-react-hooks"
+    "plugin:react-hooks/recommended"
   ],
   "plugins": ["react", "@typescript-eslint", "react-hooks"],
   "parser": "@typescript-eslint/parser",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,16 +25,27 @@ export function PostStatus({ postId }: { postId: string }) {
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [supabase] = useState(() => createBrowserSupabaseClient());
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000);
-    return () => clearInterval(interval);
+    intervalRef.current = setInterval(fetchStatus, 5000);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
   }, [postId]);
 
   const fetchStatus = async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.user?.id) return;
+    if (!session?.user?.id) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
 
     const response = await fetch(`/api/status?post_id=${postId}`);
     const result = await response.json();
@@ -46,8 +57,8 @@ export function PostStatus({ postId }: { postId: string }) {
       else if (statusVal === "publishing") setProgress(66);
       else if (statusVal === "failed") setProgress(100);
       else setProgress(33);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const Icon = status ? STATUS_ICONS[status.status] ?? AlertCircle : AlertCircle;

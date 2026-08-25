@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createUserSupabaseClient, getAccessTokenFromRequest } from "@/lib/supabase-user";
 import { z } from "zod";
 import type { Platform } from "@/types";
+import { rateLimiters } from "@/lib/rate-limiter";
 
 const connectSchema = z.object({
   platform: z.enum(["twitter", "instagram", "tiktok", "youtube"]),
@@ -9,11 +10,21 @@ const connectSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  try {
-    const supabase = createServerSupabaseClient();
-    const { data: { session } } = await supabase.auth.getSession();
+  // Rate limiting
+  const rateLimitResponse = await rateLimiters.connect(request as any);
+  if (rateLimitResponse) return rateLimitResponse;
 
-    if (!session?.user?.id) {
+  try {
+    // Use user-scoped client (respects RLS)
+    const accessToken = getAccessTokenFromRequest(request);
+    if (!accessToken) {
+      return NextResponse.json({ error: "Unauthorized - No access token" }, { status: 401 });
+    }
+    
+    const supabase = createUserSupabaseClient(accessToken);
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -27,14 +38,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const { platform, user_id } = validated.data;
+    const { platform } = validated.data;
+    const userId = user.id; // Use authenticated user's ID
 
     // For OAuth flow, we need to generate an auth URL
     // Each platform has its own OAuth endpoint
     let authUrl: string;
 
     switch (platform) {
-      case "twitter":
+      case "twitter": {
         // Twitter OAuth 2.0 for elevated access
         const clientId = process.env.TWITTER_CLIENT_ID;
         if (!clientId) {
@@ -47,8 +59,9 @@ export async function POST(request: Request) {
           `${process.env.NEXTAUTH_URL}/api/callback/twitter`
         )}`;
         break;
+      }
 
-      case "instagram":
+      case "instagram": {
         // Instagram OAuth
         const igClientId = process.env.INSTAGRAM_CLIENT_ID;
         if (!igClientId) {
@@ -61,8 +74,9 @@ export async function POST(request: Request) {
           `${process.env.NEXTAUTH_URL}/api/callback/instagram`
         )}`;
         break;
+      }
 
-      case "tiktok":
+      case "tiktok": {
         // TikTok OAuth
         const ttClientKey = process.env.TIKTOK_CLIENT_KEY;
         if (!ttClientKey) {
@@ -75,11 +89,13 @@ export async function POST(request: Request) {
           `${process.env.NEXTAUTH_URL}/api/callback/tiktok`
         )}`;
         break;
+      }
 
-      case "youtube":
+      case "youtube": {
         // YouTube OAuth - uses Google
         authUrl = `${process.env.NEXTAUTH_URL}/auth/signin`;
         break;
+      }
 
       default:
         return NextResponse.json(
@@ -89,10 +105,10 @@ export async function POST(request: Request) {
     }
 
     // Store connection request in database (pending state)
-    const { error } = await supabase
+    const { error } = await (supabase as any)
       .from("connections")
       .insert({
-        user_id,
+        user_id: userId,
         platform,
         access_token: "",
         refresh_token: "",

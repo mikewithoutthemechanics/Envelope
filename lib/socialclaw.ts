@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createAdminSupabaseClient } from "@/lib/supabase-user";
 import type { Platform, SocialPost, PlatformConnection, PostStatus } from "@/types";
 
 const PLATFORM_APIS: Record<Platform, string> = {
@@ -9,7 +9,12 @@ const PLATFORM_APIS: Record<Platform, string> = {
 };
 
 class SocialClaw {
-  private supabase = createServerSupabaseClient();
+  private supabase: any;
+
+  constructor(supabaseClient?: any) {
+    // Use provided client or fallback to admin client (for cron/background jobs)
+    this.supabase = supabaseClient || createAdminSupabaseClient();
+  }
 
   async getConnection(userId: string, platform: Platform): Promise<PlatformConnection | null> {
     const { data, error } = await this.supabase
@@ -119,7 +124,19 @@ class SocialClaw {
   }
 
   async schedulePost(scheduleId: string, userId: string): Promise<SocialPost | null> {
-    const post = await this.createPost(scheduleId, ["twitter" as Platform], userId);
+    const { data: schedule, error: scheduleError } = await this.supabase
+      .from("schedules")
+      .select("*")
+      .eq("id", scheduleId)
+      .eq("user_id", userId)
+      .single();
+
+    if (scheduleError || !schedule) {
+      console.error("Failed to find schedule:", scheduleError);
+      return null;
+    }
+
+    const post = await this.createPost(scheduleId, schedule.platforms, userId);
     if (!post) return null;
 
     for (const platform of post.platforms) {
@@ -129,12 +146,22 @@ class SocialClaw {
   }
 
   private async createScheduledItem(postId: string, platform: Platform): Promise<void> {
-    await this.supabase.from("scheduled_items").insert({
+    // Try to insert directly - the unique constraint will handle duplicates
+    const { error } = await this.supabase.from("scheduled_items").insert({
       post_id: postId,
       platform,
       scheduled_at: new Date().toISOString(),
       status: "pending",
     });
+
+    // Handle unique constraint violation (PostgreSQL error code 23505)
+    if (error && (error as any).code === "23505") {
+      return; // Already exists, that's fine
+    }
+
+    if (error) {
+      console.error("Failed to create scheduled item:", error);
+    }
   }
 
   async publishToPlatform(
@@ -220,7 +247,19 @@ class SocialClaw {
   private async uploadTwitterMedia(mediaUrl: string, connection: PlatformConnection): Promise<string> {
     const response = await fetch(mediaUrl);
     const mediaData = await response.arrayBuffer();
+    const mediaSize = mediaData.byteLength;
 
+    // For videos > 15MB or any video, use chunked upload
+    // Twitter requires chunked upload for videos, simple upload works for images < 5MB
+    const isVideo = this.isVideoUrl(mediaUrl);
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+    const needsChunkedUpload = isVideo || mediaSize > 5 * 1024 * 1024;
+
+    if (needsChunkedUpload) {
+      return this.uploadTwitterMediaChunked(mediaData, mediaSize, connection, isVideo);
+    }
+
+    // Simple upload for small images
     const uploadRes = await fetch(`${PLATFORM_APIS.twitter}/media/upload`, {
       method: "POST",
       headers: {
@@ -230,9 +269,151 @@ class SocialClaw {
       body: mediaData,
     });
 
-    if (!uploadRes.ok) throw new Error("Failed to upload media to Twitter");
+    if (!uploadRes.ok) {
+      const text = await uploadRes.text();
+      throw new Error(`Twitter media upload failed: ${uploadRes.status} ${text}`);
+    }
     const data = await uploadRes.json();
     return data.media_id_string;
+  }
+
+  private isVideoUrl(url: string): boolean {
+    const videoExtensions = ['.mp4', '.mov', '.webm', '.avi', '.mkv'];
+    const lowerUrl = url.toLowerCase();
+    return videoExtensions.some(ext => lowerUrl.includes(ext)) || lowerUrl.includes('video');
+  }
+
+  private async uploadTwitterMediaChunked(
+    mediaData: ArrayBuffer,
+    mediaSize: number,
+    connection: PlatformConnection,
+    isVideo: boolean
+  ): Promise<string> {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+    const totalChunks = Math.ceil(mediaSize / CHUNK_SIZE);
+
+    // Step 1: INIT
+    const initParams = new URLSearchParams({
+      command: "INIT",
+      total_bytes: mediaSize.toString(),
+      media_type: isVideo ? "video/mp4" : "image/jpeg",
+      media_category: isVideo ? "tweet_video" : "tweet_image",
+    });
+
+    const initRes = await fetch(`${PLATFORM_APIS.twitter}/media/upload?${initParams}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.access_token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
+
+    if (!initRes.ok) {
+      const text = await initRes.text();
+      throw new Error(`Twitter INIT failed: ${initRes.status} ${text}`);
+    }
+
+    const initData = await initRes.json();
+    const mediaId = initData.media_id_string;
+
+    // Step 2: APPEND chunks
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, mediaSize);
+      const chunk = mediaData.slice(start, end);
+
+      const appendParams = new URLSearchParams({
+        command: "APPEND",
+        media_id: mediaId,
+        segment_index: i.toString(),
+      });
+
+      const appendRes = await fetch(`${PLATFORM_APIS.twitter}/media/upload?${appendParams}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${connection.access_token}`,
+        },
+        body: chunk,
+      });
+
+      if (!appendRes.ok) {
+        const text = await appendRes.text();
+        throw new Error(`Twitter APPEND chunk ${i} failed: ${appendRes.status} ${text}`);
+      }
+    }
+
+    // Step 3: FINALIZE
+    const finalizeParams = new URLSearchParams({
+      command: "FINALIZE",
+      media_id: mediaId,
+    });
+
+    const finalizeRes = await fetch(`${PLATFORM_APIS.twitter}/media/upload?${finalizeParams}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.access_token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    });
+
+    if (!finalizeRes.ok) {
+      const text = await finalizeRes.text();
+      throw new Error(`Twitter FINALIZE failed: ${finalizeRes.status} ${text}`);
+    }
+
+    // Step 4: STATUS check for videos (wait for processing)
+    if (isVideo) {
+      await this.waitForTwitterMediaProcessing(mediaId, connection);
+    }
+
+    return mediaId;
+  }
+
+  private async waitForTwitterMediaProcessing(mediaId: string, connection: PlatformConnection): Promise<void> {
+    const maxAttempts = 60; // 5 minutes max (5s intervals)
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      const statusParams = new URLSearchParams({
+        command: "STATUS",
+        media_id: mediaId,
+      });
+
+      const statusRes = await fetch(`${PLATFORM_APIS.twitter}/media/upload?${statusParams}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${connection.access_token}`,
+        },
+      });
+
+      if (!statusRes.ok) {
+        const text = await statusRes.text();
+        throw new Error(`Twitter STATUS check failed: ${statusRes.status} ${text}`);
+      }
+
+      const statusData = await statusRes.json();
+      const processingInfo = statusData.processing_info;
+
+      if (!processingInfo) {
+        // No processing info means it's ready
+        return;
+      }
+
+      if (processingInfo.state === "succeeded") {
+        return;
+      }
+
+      if (processingInfo.state === "failed") {
+        throw new Error(`Twitter media processing failed: ${processingInfo.error?.message || "Unknown error"}`);
+      }
+
+      // Wait before next check
+      const checkAfterSecs = processingInfo.check_after_secs || 5;
+      await new Promise(resolve => setTimeout(resolve, checkAfterSecs * 1000));
+      attempts++;
+    }
+
+    throw new Error("Twitter media processing timed out");
   }
 
   private async postToInstagram(post: SocialPost, connection: PlatformConnection): Promise<void> {
@@ -339,11 +520,25 @@ class SocialClaw {
     const videoUrl = post.media_urls[0];
     const videoRes = await fetch(videoUrl);
     const videoData = await videoRes.arrayBuffer();
+    const videoSize = videoData.byteLength;
 
+    // Use resumable upload for videos > 5MB or any video
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks (YouTube recommends 256KB minimum, 10MB is good balance)
+    const needsResumableUpload = videoSize > 5 * 1024 * 1024;
+
+    if (needsResumableUpload) {
+      await this.uploadYouTubeVideoResumable(videoData, videoSize, post.content, connection);
+    } else {
+      // Simple upload for small videos
+      await this.uploadYouTubeVideoSimple(videoData, post.content, connection);
+    }
+  }
+
+  private async uploadYouTubeVideoSimple(videoData: ArrayBuffer, content: string, connection: PlatformConnection): Promise<void> {
     const metadata = {
       snippet: {
-        title: post.content.substring(0, 100),
-        description: post.content,
+        title: content.substring(0, 100),
+        description: content,
       },
       status: {
         privacyStatus: "private",
@@ -365,6 +560,110 @@ class SocialClaw {
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`YouTube API error: ${response.status} ${text}`);
+    }
+  }
+
+  private async uploadYouTubeVideoResumable(
+    videoData: ArrayBuffer,
+    videoSize: number,
+    content: string,
+    connection: PlatformConnection
+  ): Promise<void> {
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+    const totalChunks = Math.ceil(videoSize / CHUNK_SIZE);
+
+    const metadata = {
+      snippet: {
+        title: content.substring(0, 100),
+        description: content,
+      },
+      status: {
+        privacyStatus: "private",
+      },
+    };
+
+    // Step 1: Initiate resumable upload session
+    const initiateRes = await fetch(
+      `${PLATFORM_APIS.youtube}/videos?part=snippet,status&uploadType=resumable`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${connection.access_token}`,
+          "Content-Type": "application/json",
+          "X-Upload-Content-Type": "video/*",
+          "X-Upload-Content-Length": videoSize.toString(),
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
+
+    if (!initiateRes.ok) {
+      const text = await initiateRes.text();
+      throw new Error(`YouTube resumable init failed: ${initiateRes.status} ${text}`);
+    }
+
+    // Get the resumable upload URL from Location header
+    const uploadUrl = initiateRes.headers.get("Location");
+    if (!uploadUrl) {
+      throw new Error("YouTube resumable upload URL not provided");
+    }
+
+    // Step 2: Upload chunks
+    let bytesUploaded = 0;
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, videoSize);
+      const chunk = videoData.slice(start, end);
+      const chunkSize = end - start;
+
+      const contentRange = `bytes ${start}-${end - 1}/${videoSize}`;
+
+      let retries = 0;
+      const maxRetries = 3;
+      let chunkSuccess = false;
+
+      while (retries <= maxRetries && !chunkSuccess) {
+        const chunkRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${connection.access_token}`,
+            "Content-Range": contentRange,
+            "Content-Length": chunkSize.toString(),
+          },
+          body: chunk,
+        });
+
+        if (chunkRes.ok || chunkRes.status === 308) {
+          // 308 = Resume Incomplete (more chunks needed), 200/201 = Complete
+          chunkSuccess = true;
+          bytesUploaded = end;
+        } else if (chunkRes.status === 401 || chunkRes.status === 403) {
+          // Token expired, refresh and retry
+          const refreshed = await this.refreshConnection(connection);
+          if (!refreshed) {
+            throw new Error("Failed to refresh YouTube token");
+          }
+          connection = refreshed;
+          retries++;
+        } else if (chunkRes.status >= 500) {
+          // Server error, retry with exponential backoff
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
+          retries++;
+        } else {
+          // Client error, don't retry
+          const text = await chunkRes.text();
+          throw new Error(`YouTube chunk upload failed: ${chunkRes.status} ${text}`);
+        }
+      }
+
+      if (!chunkSuccess) {
+        throw new Error(`YouTube chunk ${i} failed after ${maxRetries} retries`);
+      }
+    }
+
+    // Verify upload completed
+    if (bytesUploaded !== videoSize) {
+      throw new Error(`YouTube upload incomplete: ${bytesUploaded}/${videoSize} bytes`);
     }
   }
 
@@ -397,6 +696,19 @@ class SocialClaw {
         published_at: new Date().toISOString(),
       })
       .eq("id", postId);
+
+    // Also update corresponding scheduled_items to "completed"
+    const { data: post, error: postError } = await this.supabase
+      .from("posts")
+      .select("platforms")
+      .eq("id", postId)
+      .single();
+
+    if (postError || !post) return;
+
+    for (const platform of post.platforms) {
+      await this.updateScheduledItem(postId, platform, "completed");
+    }
   }
 
   async getPostStatus(postId: string, userId: string): Promise<PostStatus | null> {
@@ -416,8 +728,10 @@ class SocialClaw {
 
     if (itemsError) return null;
 
-    const statuses: PostStatus[] = post.platforms.map((platform) => {
-      const item = items.find((i) => i.platform === platform);
+    const statuses: PostStatus[] = post.platforms.map((platform: string) => {
+      const item = items.find(
+        (i: { platform: string }) => i.platform.toLowerCase() === platform.toLowerCase()
+      );
       return {
         post_id: postId,
         platform,
@@ -448,12 +762,13 @@ class SocialClaw {
     return true;
   }
 
-  async getAllPendingRuns(): Promise<any[]> {
+  async getAllPendingRuns(userId: string): Promise<any[]> {
     const now = new Date().toISOString();
     const { data, error } = await this.supabase
       .from("scheduled_runs")
       .select("*")
       .eq("status", "pending")
+      .eq("user_id", userId)
       .lte("run_at", now);
 
     if (error) {
@@ -464,10 +779,45 @@ class SocialClaw {
   }
 
   async updateRunStatus(runId: string, status: "pending" | "processing" | "completed" | "failed", error?: string): Promise<void> {
+    const { data: currentRun, error: fetchError } = await this.supabase
+      .from("scheduled_runs")
+      .select("status")
+      .eq("id", runId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Validate status transitions
+    if (currentRun?.status === "processing" && status === "pending") {
+      throw new Error("Invalid status transition: cannot go from processing back to pending");
+    }
+
     await this.supabase
       .from("scheduled_runs")
       .update({ status, error_message: error })
       .eq("id", runId);
+  }
+
+  async cancelPost(postId: string, userId: string): Promise<void> {
+    // Update post status to failed
+    await this.supabase
+      .from("posts")
+      .update({ status: "failed", error_message: "Cancelled by user" })
+      .eq("id", postId)
+      .eq("user_id", userId);
+
+    // Update corresponding scheduled_items to failed
+    const { data: post, error: postError } = await this.supabase
+      .from("posts")
+      .select("platforms")
+      .eq("id", postId)
+      .single();
+
+    if (postError || !post) return;
+
+    for (const platform of post.platforms) {
+      await this.updateScheduledItem(postId, platform, "failed", "Cancelled by user");
+    }
   }
 }
 
@@ -492,4 +842,8 @@ function getPlatformSecret(platform: Platform): string {
   return keys[platform];
 }
 
+// Export class for user-scoped instantiation
+export { SocialClaw };
+
+// Default export for backward compatibility (uses admin client - for cron/background jobs only)
 export const socialclaw = new SocialClaw();

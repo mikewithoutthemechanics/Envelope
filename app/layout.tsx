@@ -1,7 +1,5 @@
 import "./globals.css";
 import { AuthProvider } from "@/context/auth-context";
-import { NextMenu } from "next/navigation";
-import { Songbook } from "lucide-react";
 
 export const metadata = {
   title: "SocialClaw - Social Media Scheduler",
@@ -17,7 +15,6 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-background font-sans antialiased">
         <AuthProvider>{children}</AuthProvider>
-        <NextMenu />
       </body>
     </html>
   );
