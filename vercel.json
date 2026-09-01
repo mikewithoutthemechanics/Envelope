@@ -4,18 +4,14 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "regions": ["iad1"],
+  "regions": [
+    "iad1"
+  ],
   "functions": {
     "app/api/**/*.ts": {
       "maxDuration": 60
     }
   },
-  "crons": [
-    {
-      "path": "/api/cron/process-scheduled",
-      "schedule": "*/5 * * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",
